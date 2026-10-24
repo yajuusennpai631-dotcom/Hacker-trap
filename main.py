@@ -85,7 +85,10 @@ CAMERA_PAGE = """<!doctype html>
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="google-site-verification" content="62QmyJujyPwsJeOmgEp3YLICDEkZNAro_t5qLEHgR2w">
-<title>HomeNest Cam - カメラ設定</title>
+<meta name="description" content="HomeNest Cam is a fictional smart home security camera dashboard for device status, network configuration, and administrator access.">
+<meta property="og:title" content="HomeNest Cam - Smart Camera Dashboard">
+<meta property="og:description" content="Explore device status, network settings, and the HomeNest Cam administration interface.">
+<title>HomeNest Cam - Smart Camera Dashboard | Device Settings</title>
 <style>
 :root{--blue:#2878c8;--line:#d9e0e7;--ink:#283746;--muted:#73808c}
 *{box-sizing:border-box}body{margin:0;background:#eef2f5;color:var(--ink);font:14px Arial,"Noto Sans JP",sans-serif}
@@ -152,6 +155,35 @@ a{{color:#2769a3}}small{{color:#73808c}}</style></head><body><main><h1>{title}</
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+async def robots_txt():
+    # Public discovery hints for crawlers; these paths are decoys, not protected resources.
+    return PlainTextResponse(
+        "User-agent: *\\n"
+        "Allow: /\\n"
+        "Disallow: /admin\\n"
+        "Disallow: /config\\n"
+        "Disallow: /fake-shell\\n"
+        "Sitemap: https://honeypot-web-production.up.railway.app/sitemap.xml\\n",
+        media_type="text/plain",
+    )
+
+
+@app.get("/sitemap.xml", response_class=PlainTextResponse)
+async def sitemap_xml():
+    # Publish only decoy pages intended for crawler discovery.
+    return PlainTextResponse(
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        '<url><loc>https://honeypot-web-production.up.railway.app/</loc></url>'
+        '<url><loc>https://honeypot-web-production.up.railway.app/login</loc></url>'
+        '<url><loc>https://honeypot-web-production.up.railway.app/admin</loc></url>'
+        '<url><loc>https://honeypot-web-production.up.railway.app/config</loc></url>'
+        '</urlset>',
+        media_type="application/xml",
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
