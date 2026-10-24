@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 
 import httpx
@@ -44,6 +45,17 @@ def classify_request(path: str, haystack: str, user_agent: str, method: str) -> 
         tags.append("ua_claim:automation")
     if any(marker in haystack for marker in SUSPICIOUS_MARKERS):
         tags.append("signal:exploit_probe")
+    # Classify only pattern families; never forward or persist the matched payload text.
+    payload_patterns = {
+        "payload:sql_injection_candidate": ("union select", " or 1=1", "' or '1'='1", "sleep(", "information_schema", "benchmark("),
+        "payload:path_traversal_candidate": ("../", "..%2f", "%2e%2e%2f", "..\\\\"),
+        "payload:xss_candidate": ("<script", "%3cscript", "javascript:", "onerror=", "onload="),
+        "payload:command_injection_candidate": (";cat ", "|whoami", "cmd=", "/bin/sh", "powershell", "wget ", "curl "),
+        "payload:sensitive_path_candidate": (".env", ".git/config", "proc/self", "etc/passwd"),
+    }
+    for tag, patterns in payload_patterns.items():
+        if any(pattern in haystack for pattern in patterns):
+            tags.append(tag)
     common_paths = (
         "/.env", "/.git", "/wp-login", "/wp-admin", "/phpmyadmin",
         "/vendor/phpunit", "/actuator", "/cgi-bin", "/server-status",
@@ -58,7 +70,7 @@ def classify_request(path: str, haystack: str, user_agent: str, method: str) -> 
     return tags
 
 
-async def record_event(request: Request, event: str, status_code: int = 200) -> None:
+async def record_event(request: Request, event: str, status_code: int = 200, response_ms: float | None = None) -> None:
     # Never parse or store submitted form fields, request bodies, or passwords.
     path = request.url.path[:300]
     query_keys = sorted({key[:80] for key in request.query_params.keys()})[:30]
@@ -76,6 +88,7 @@ async def record_event(request: Request, event: str, status_code: int = 200) -> 
         "client_ip": request.client.host if request.client else None,
         "user_agent": user_agent,
         "status_code": status_code,
+        "response_ms": round(response_ms, 2) if response_ms is not None else None,
         "tags": tags,
     }
     logger.info(json.dumps(payload, ensure_ascii=False))
@@ -88,6 +101,7 @@ async def record_event(request: Request, event: str, status_code: int = 200) -> 
             "method": payload["method"],
             "path": path,
             "status_code": status_code,
+            "response_ms": round(response_ms, 2) if response_ms is not None else None,
             "tags": tags,
             # Do not forward raw User-Agent, query values, or request bodies.
             # Sent only to the private ingest endpoint for coarse geolocation;
@@ -113,12 +127,15 @@ async def record_event(request: Request, event: str, status_code: int = 200) -> 
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
+    started = time.perf_counter()
     try:
         response = await call_next(request)
     except Exception:
-        await record_event(request, "server_error", 500)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        await record_event(request, "server_error", 500, elapsed_ms)
         raise
-    await record_event(request, "http_request", response.status_code)
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    await record_event(request, "http_request", response.status_code, elapsed_ms)
     return response
 
 
