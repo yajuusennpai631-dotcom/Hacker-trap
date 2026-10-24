@@ -49,6 +49,12 @@ async def record_event(request: Request, event: str, status_code: int = 200) -> 
             "path": path,
             "status_code": status_code,
             "tags": tags,
+            # Sent only to the private ingest endpoint for coarse geolocation;
+            # the dashboard resolves it and discards the raw IP.
+            "client_ip": (
+                request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                or (request.client.host if request.client else None)
+            ),
         }
         try:
             async with httpx.AsyncClient(timeout=1.2) as client:
