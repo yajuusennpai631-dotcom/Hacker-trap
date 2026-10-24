@@ -135,7 +135,9 @@ async def log_requests(request: Request, call_next):
         await record_event(request, "server_error", 500, elapsed_ms)
         raise
     elapsed_ms = (time.perf_counter() - started) * 1000
-    await record_event(request, "http_request", response.status_code, elapsed_ms)
+    # Health probes are operational checks, not public access events.
+    if request.url.path != "/health":
+        await record_event(request, "http_request", response.status_code, elapsed_ms)
     return response
 
 
