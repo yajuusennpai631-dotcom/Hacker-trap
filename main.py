@@ -84,6 +84,7 @@ async def log_requests(request: Request, call_next):
 CAMERA_PAGE = """<!doctype html>
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="google-site-verification" content="62QmyJujyPwsJeOmgEp3YLICDEkZNAro_t5qLEHgR2w">
 <title>HomeNest Cam - カメラ設定</title>
 <style>
 :root{--blue:#2878c8;--line:#d9e0e7;--ink:#283746;--muted:#73808c}
