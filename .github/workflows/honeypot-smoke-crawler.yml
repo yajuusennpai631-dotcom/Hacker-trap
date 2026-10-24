@@ -1,0 +1,24 @@
+name: Bounded honeypot test crawl
+
+on:
+  workflow_dispatch:
+  schedule:
+    # A small, clearly identified smoke test every six hours (UTC).
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: honeypot-test-crawler
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Run bounded test crawler
+        run: python3 tools/test_crawler.py
