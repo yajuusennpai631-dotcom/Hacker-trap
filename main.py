@@ -15,10 +15,47 @@ INGEST_TOKEN = os.environ.get("INGEST_TOKEN", "")
 app = FastAPI(title="Hacker Trap", docs_url=None, redoc_url=None, openapi_url=None)
 
 SUSPICIOUS_MARKERS = (
-    "wp-login", "wp-admin", ".env", "phpmyadmin", "admin",
-    "passwd", "proc/self", "etc/passwd", "union select",
-    " or 1=1", "../", "..%2f", "<script", "cmd=",
+    "wp-login", "wp-admin", ".env", "phpmyadmin", "passwd",
+    "proc/self", "etc/passwd", "union select", " or 1=1",
+    "../", "..%2f", "<script", "cmd=", ".git/config",
+    "vendor/phpunit", "actuator/env", "cgi-bin", "server-status",
 )
+SEARCH_CRAWLER_UA = (
+    "googlebot", "bingbot", "duckduckbot", "yandexbot",
+    "baiduspider", "applebot", "bytespider",
+)
+SCANNER_UA = (
+    "nuclei", "nikto", "sqlmap", "masscan", "zgrab",
+    "gobuster", "ffuf", "dirbuster", "feroxbuster", "wpscan",
+)
+AUTOMATION_UA = ("python-requests", "aiohttp", "go-http-client", "curl/", "wget/")
+
+
+def classify_request(path: str, haystack: str, user_agent: str, method: str) -> list[str]:
+    # These are heuristic hints only. User-Agent strings are self-reported and spoofable.
+    tags: list[str] = []
+    ua = user_agent.lower()
+    p = path.lower()
+    if any(token in ua for token in SEARCH_CRAWLER_UA):
+        tags.append("ua_claim:search_crawler")
+    if any(token in ua for token in SCANNER_UA):
+        tags.append("ua_claim:scanner_tool")
+    elif any(token in ua for token in AUTOMATION_UA):
+        tags.append("ua_claim:automation")
+    if any(marker in haystack for marker in SUSPICIOUS_MARKERS):
+        tags.append("signal:exploit_probe")
+    common_paths = (
+        "/.env", "/.git", "/wp-login", "/wp-admin", "/phpmyadmin",
+        "/vendor/phpunit", "/actuator", "/cgi-bin", "/server-status",
+        "/boaform", "/hn ap1".replace(" ", ""),
+    )
+    if any(token in p for token in common_paths):
+        tags.append("signal:common_scan_path")
+    if method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+        tags.append("signal:non_read_method")
+    if any(tag in tags for tag in ("ua_claim:scanner_tool", "signal:exploit_probe", "signal:common_scan_path")):
+        tags.append("assessment:scanner_like")
+    return tags
 
 
 async def record_event(request: Request, event: str, status_code: int = 200) -> None:
@@ -26,7 +63,10 @@ async def record_event(request: Request, event: str, status_code: int = 200) -> 
     path = request.url.path[:300]
     query_keys = sorted({key[:80] for key in request.query_params.keys()})[:30]
     haystack = (path + " " + str(request.url.query)).lower()
+    user_agent = request.headers.get("user-agent", "")[:300]
     tags = [marker for marker in SUSPICIOUS_MARKERS if marker in haystack]
+    tags.extend(classify_request(path, haystack, user_agent, request.method))
+    tags = list(dict.fromkeys(tags))[:30]
     payload = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "event": event,
@@ -34,7 +74,7 @@ async def record_event(request: Request, event: str, status_code: int = 200) -> 
         "path": path,
         "query_keys": query_keys,
         "client_ip": request.client.host if request.client else None,
-        "user_agent": request.headers.get("user-agent", "")[:300],
+        "user_agent": user_agent,
         "status_code": status_code,
         "tags": tags,
     }
@@ -49,6 +89,7 @@ async def record_event(request: Request, event: str, status_code: int = 200) -> 
             "path": path,
             "status_code": status_code,
             "tags": tags,
+            # Do not forward raw User-Agent, query values, or request bodies.
             # Sent only to the private ingest endpoint for coarse geolocation;
             # the dashboard resolves it and discards the raw IP.
             "client_ip": (
