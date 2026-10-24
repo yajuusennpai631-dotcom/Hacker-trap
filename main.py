@@ -122,6 +122,25 @@ async def decoy_pages(request: Request):
     return await home()
 
 
+@app.get("/fake-shell", response_class=HTMLResponse)
+async def fake_shell(request: Request):
+    # A visual-only decoy. Never launches a shell or executes submitted commands.
+    await record_event(request, "fake_shell_access", 200)
+    return HTMLResponse("""<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Maintenance Console</title>
+<style>body{background:#080d18;color:#b7f7d2;font:15px ui-monospace,monospace;padding:28px}
+main{max-width:760px;margin:auto;border:1px solid #285642;border-radius:10px;padding:22px;background:#0c1718}
+h1{font-size:19px;color:#65e6a4}.tag{color:#f4ca75}pre{white-space:pre-wrap;line-height:1.7}</style></head>
+<body><main><h1>Maintenance Console</h1><div class="tag">SIMULATED ENVIRONMENT · READ ONLY</div>
+<pre>Session: restricted
+Environment: decoy
+Command execution: disabled
+Filesystem access: disabled
+Audit: access event recorded
+
+This endpoint is a non-functional honeypot decoy.
+No operating-system shell is available.</pre></main></body></html>""")
+
 @app.get("/api/status")
 async def fake_api_status():
     return JSONResponse({"status": "ok", "version": "1.0"})
