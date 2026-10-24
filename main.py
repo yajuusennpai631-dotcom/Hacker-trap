@@ -161,12 +161,12 @@ async def health():
 async def robots_txt():
     # Public discovery hints for crawlers; these paths are decoys, not protected resources.
     return PlainTextResponse(
-        "User-agent: *\\n"
-        "Allow: /\\n"
-        "Disallow: /admin\\n"
-        "Disallow: /config\\n"
-        "Disallow: /fake-shell\\n"
-        "Sitemap: https://honeypot-web-production.up.railway.app/sitemap.xml\\n",
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /admin\n"
+        "Disallow: /config\n"
+        "Disallow: /fake-shell\n"
+        "Sitemap: https://honeypot-web-production.up.railway.app/sitemap.xml\n",
         media_type="text/plain",
     )
 
