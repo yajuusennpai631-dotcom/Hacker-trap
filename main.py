@@ -2,13 +2,15 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from html import escape
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+import httpx
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("honeypot")
+DASHBOARD_INGEST_URL = os.environ.get("DASHBOARD_INGEST_URL", "")
+INGEST_TOKEN = os.environ.get("INGEST_TOKEN", "")
 
 app = FastAPI(title="Hacker Trap", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -19,7 +21,7 @@ SUSPICIOUS_MARKERS = (
 )
 
 
-def record_event(request: Request, event: str, status_code: int = 200) -> None:
+async def record_event(request: Request, event: str, status_code: int = 200) -> None:
     # Deliberately do not read request bodies or record form values/passwords.
     path = request.url.path[:300]
     query_keys = sorted({key[:80] for key in request.query_params.keys()})[:30
@@ -38,6 +40,29 @@ def record_event(request: Request, event: str, status_code: int = 200) -> None:
         "tags": tags,
     }
     logger.info(json.dumps(payload, ensure_ascii=False))
+    # Send only non-identifying event metadata to the public dashboard.
+    # IP, user-agent, query values, request bodies, and credentials are excluded.
+    if DASHBOARD_INGEST_URL and INGEST_TOKEN:
+        public_event = {
+            "timestamp": payload["timestamp"],
+            "event": event,
+            "method": payload["method"],
+            "path": path,
+            "status_code": status_code,
+            "tags": tags,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=1.2) as client:
+                await client.post(
+                    DASHBOARD_INGEST_URL,
+                    json=public_event,
+                    headers={"Authorization": f"Bearer {INGEST_TOKEN}"},
+                )
+        except Exception as exc:
+            logger.warning(json.dumps({
+                "event": "dashboard_delivery_failed",
+                "reason": type(exc).__name__,
+            }))
 
 
 @app.middleware("http")
@@ -45,9 +70,9 @@ async def log_requests(request: Request, call_next):
     try:
         response = await call_next(request)
     except Exception:
-        record_event(request, "server_error", 500)
+        await record_event(request, "server_error", 500)
         raise
-    record_event(request, "http_request", response.status_code)
+    await record_event(request, "http_request", response.status_code)
     return response
 
 
@@ -83,7 +108,7 @@ async def home():
 @app.post("/login", response_class=HTMLResponse)
 async def fake_login(request: Request):
     # No submitted credentials are parsed, logged, or persisted.
-    record_event(request, "login_attempt", 200)
+    await record_event(request, "login_attempt", 200)
     return HTMLResponse(
         "<h1>Sign-in failed</h1><p>Unable to verify credentials.</p>",
         status_code=200,
