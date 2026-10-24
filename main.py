@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -12,6 +14,7 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("honeypot")
 DASHBOARD_INGEST_URL = os.environ.get("DASHBOARD_INGEST_URL", "")
 INGEST_TOKEN = os.environ.get("INGEST_TOKEN", "")
+FINGERPRINT_KEY = (os.environ.get("EVENT_FINGERPRINT_KEY", "") or INGEST_TOKEN).encode("utf-8")
 
 app = FastAPI(title="Hacker Trap", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -70,12 +73,23 @@ def classify_request(path: str, haystack: str, user_agent: str, method: str) -> 
     return tags
 
 
+def actor_fingerprint(client_ip: str, user_agent: str) -> str | None:
+    """Return a keyed pseudonymous correlation token; never expose the source values."""
+    if not FINGERPRINT_KEY or not client_ip:
+        return None
+    material = (client_ip.strip() + "|" + user_agent[:200]).encode("utf-8", errors="replace")
+    return hmac.new(FINGERPRINT_KEY, material, hashlib.sha256).hexdigest()[:24]
+
+
 async def record_event(request: Request, event: str, status_code: int = 200, response_ms: float | None = None) -> None:
     # Never parse or store submitted form fields, request bodies, or passwords.
     path = request.url.path[:300]
     query_keys = sorted({key[:80] for key in request.query_params.keys()})[:30]
     haystack = (path + " " + str(request.url.query)).lower()
     user_agent = request.headers.get("user-agent", "")[:300]
+    forwarded_ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    observed_ip = forwarded_ip or (request.client.host if request.client else "")
+    actor_key = actor_fingerprint(observed_ip, user_agent)
     tags = [marker for marker in SUSPICIOUS_MARKERS if marker in haystack]
     tags.extend(classify_request(path, haystack, user_agent, request.method))
     tags = list(dict.fromkeys(tags))[:30]
@@ -103,12 +117,13 @@ async def record_event(request: Request, event: str, status_code: int = 200, res
             "status_code": status_code,
             "response_ms": round(response_ms, 2) if response_ms is not None else None,
             "tags": tags,
+            # Keyed pseudonymous token enables coarse behavior correlation; source values stay private.
+            "actor_key": actor_key,
             # Do not forward raw User-Agent, query values, or request bodies.
             # Sent only to the private ingest endpoint for coarse geolocation;
             # the dashboard resolves it and discards the raw IP.
             "client_ip": (
-                request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-                or (request.client.host if request.client else None)
+                observed_ip or None
             ),
         }
         try:
